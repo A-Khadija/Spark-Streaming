@@ -1,0 +1,13 @@
+# Dependencies
+node_modules/
+venv/
+env/
+__pycache__/
+*.pkl
+# Spark/Data specific
+metastore_db/
+spark-warehouse/
+checkpoint/
+*.log
+
+data/
