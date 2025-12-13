@@ -13,7 +13,7 @@ services:
   # -----------------------------------------------------------
   # KAFKA BROKER
   # -----------------------------------------------------------
- 
+
   # --- 1. MESSAGING ---
   kafka:
     image: confluentinc/cp-kafka:7.5.0
@@ -31,7 +31,6 @@ services:
 
     volumes:
       - kafka_data:/var/lib/kafka/data
-
 
   kafka-ui:
     image: provectuslabs/kafka-ui:latest
@@ -72,7 +71,6 @@ services:
       PYSPARK_PYTHON: python
       PYSPARK_DRIVER_PYTHON: python
 
-  
   # --- 2. BATCH STORAGE (PostgreSQL) ---
   postgres:
     image: postgres:13
