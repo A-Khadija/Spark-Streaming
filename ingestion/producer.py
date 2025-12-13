@@ -1,5 +1,3 @@
-print(" producer.py STARTED")
-
 import pandas as pd
 import json
 import time
