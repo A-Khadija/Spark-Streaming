@@ -1,0 +1,98 @@
+services:
+  # -----------------------------------------------------------
+  # ZOOKEEPER
+  # -----------------------------------------------------------
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    ports:
+      - "2181:2181"
+  # -----------------------------------------------------------
+  # KAFKA BROKER
+  # -----------------------------------------------------------
+ 
+  # --- 1. MESSAGING ---
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      - zookeeper
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:9092
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    ports:
+      - "9092:9092"
+
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+
+
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    ports:
+      - "8080:8080"
+    environment:
+      - KAFKA_CLUSTERS_0_NAME=local
+      - KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS=kafka:9092
+    depends_on:
+      - kafka
+
+  # -------------------------
+  # PRODUCER
+  # -------------------------
+  producer:
+    build: .
+    container_name: producer
+    depends_on:
+      - kafka
+    command: python ingestion/producer.py
+    volumes:
+      - .:/app
+
+  # -------------------------
+  # SPARK STREAMING
+  # -------------------------
+  spark-processor:
+    build: .
+    container_name: spark-processor
+    depends_on:
+      - kafka
+    command: python processing/spark_streaming.py
+    volumes:
+      - .:/app
+    environment:
+      PYTHONUNBUFFERED: 1
+      PYSPARK_PYTHON: python
+      PYSPARK_DRIVER_PYTHON: python
+
+  
+  # --- 2. BATCH STORAGE (PostgreSQL) ---
+  postgres:
+    image: postgres:13
+    container_name: postgres
+    environment:
+      POSTGRES_USER: user
+      POSTGRES_PASSWORD: password
+      POSTGRES_DB: ecommerce
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+
+  # --- 3. REAL-TIME STORAGE (Redis) ---
+  redis:
+    image: redis:latest
+    container_name: redis
+    ports:
+      - "6379:6379"
+
+volumes:
+  kafka_data:
+  postgres_data:
