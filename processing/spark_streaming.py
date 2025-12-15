@@ -1,12 +1,8 @@
-import logging
-
 from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
     from_json,
     col,
-    struct,
     count,
-    window,
     split,
     dayofweek,
     to_timestamp,
@@ -20,20 +16,21 @@ from pyspark.sql.types import (
 )
 import redis
 
-# --- CONFIGURATION ---
-KAFKA_BOOTSTRAP = "kafka:9092"  # Connects to the internal Docker network listener
+# ================= CONFIG =================
+KAFKA_BOOTSTRAP = "kafka:9092"
 TOPIC = "user_behavior"
+
 POSTGRES_URL = "jdbc:postgresql://postgres:5432/ecommerce"
 POSTGRES_PROPERTIES = {
     "user": "user",
     "password": "password",
     "driver": "org.postgresql.Driver",
 }
+
 REDIS_HOST = "redis"
 REDIS_PORT = 6379
 
-
-# --- SCHEMA DEFINITION ---
+# ================= SCHEMA =================
 schema = StructType(
     [
         StructField("event_time", StringType()),
@@ -50,50 +47,77 @@ schema = StructType(
 )
 
 
-def write_features_to_redis(batch_df, batch_id):
-    """
-    Writes Calculated Features to Redis.
-    1. Category Counts -> "category_stats:{category}"
-    2. User Activity Count -> "user_activity:{user_session}"
-    """
-    r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0)
+# ================= POSTGRES WRITER =================
+def write_to_postgres(df, batch_id):
+    (
+        df.select(
+            "event_time",
+            "processing_time",
+            "event_type",
+            "product_id",
+            "category_id",
+            "category_code",
+            "brand",
+            "price",
+            "user_id",
+            "user_session",
+            "category_level1",
+            "category_level2",
+            "event_weekday",
+        ).write.jdbc(
+            url=POSTGRES_URL,
+            table="raw_events",
+            mode="append",
+            properties=POSTGRES_PROPERTIES,
+        )
+    )
 
-    print(f"🔥 Writing Batch {batch_id} to Redis...")
+    print(f"✅ Batch {batch_id}: written to PostgreSQL")
+
+
+# ================= REDIS WRITERS =================
+def write_category_stats(df, batch_id):
+    r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0)
     pipe = r.pipeline()
 
-    for row in batch_df.toLocalIterator():
-        # Check which type of aggregation this row is
-        if "category_code" in row:
-            # It's the Category Count Stream
-            cat = row["category_code"]
-            cnt = row["count"]
-            if cat:
-                pipe.set(f"category_stats:{cat}", cnt)
-
-        elif "user_session" in row:
-            # It's the User Activity Stream (Feature for ML)
-            session = row["user_session"]
-            act_count = row["activity_count"]
-            if session:
-                # We store this so the API can look it up later: "How active is this user?"
-                pipe.set(f"user_activity:{session}", act_count)
+    for row in df.collect():
+        if row["category_code"]:
+            pipe.set(f"category_stats:{row['category_code']}", row["count"])
 
     pipe.execute()
+    print(f"✅ Batch {batch_id}: category stats written to Redis")
 
 
+def write_user_activity(df, batch_id):
+    r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0)
+    pipe = r.pipeline()
+
+    for row in df.collect():
+        if row["user_session"]:
+            pipe.set(
+                f"user_activity:{row['user_session']}",
+                row["activity_count"],
+            )
+
+    pipe.execute()
+    print(f"✅ Batch {batch_id}: user activity written to Redis")
+
+
+# ================= MAIN STREAM =================
 def process_stream():
     spark = (
         SparkSession.builder.appName("EcommerceStreaming")
         .config(
             "spark.jars.packages",
-            "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,org.postgresql:postgresql:42.6.0",
+            "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,"
+            "org.postgresql:postgresql:42.6.0",
         )
         .getOrCreate()
     )
 
     spark.sparkContext.setLogLevel("WARN")
 
-    # 1. Read from Kafka
+    # -------- READ FROM KAFKA --------
     raw_stream = (
         spark.readStream.format("kafka")
         .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP)
@@ -102,67 +126,62 @@ def process_stream():
         .load()
     )
 
-    # 2. Parse JSON
+    # -------- PARSE JSON --------
     json_stream = raw_stream.select(
         from_json(col("value").cast("string"), schema).alias("data")
     ).select("data.*")
 
-    # --- TRANSFORMATIONS (Feature Engineering) ---
-
-    transformed_stream = (
+    # -------- FEATURE ENGINEERING --------
+    transformed = (
         json_stream.withColumn(
-            "category_level1", split(col("category_code"), "\.").getItem(0)
+            "event_time",
+            to_timestamp(col("event_time"), "yyyy-MM-dd HH:mm:ss"),
         )
-        .withColumn("category_level2", split(col("category_code"), "\.").getItem(1))
-        .withColumn("event_weekday", dayofweek(to_timestamp(col("event_time"))))
+        .withColumn(
+            "processing_time",
+            to_timestamp(col("processing_time"), "yyyy-MM-dd HH:mm:ss"),
+        )
+        .withColumn(
+            "category_level1",
+            split(col("category_code"), "\.").getItem(0),
+        )
+        .withColumn(
+            "category_level2",
+            split(col("category_code"), "\.").getItem(1),
+        )
+        .withColumn(
+            "event_weekday",
+            dayofweek(col("event_time")),
+        )
     )
 
-    # --- BRANCH A: BATCH STORAGE (POSTGRES) ---
-    # Write the FULL transformed data (with new columns) to Postgres
-    postgres_query = (
-        transformed_stream.writeStream.foreachBatch(
-            lambda df, epoch_id: df.write.jdbc(
-                url=POSTGRES_URL,
-                table="raw_events",
-                mode="append",
-                properties=POSTGRES_PROPERTIES,
-            )
-        )
-        .trigger(processingTime="10 seconds")
-        .start()
-    )
+    # -------- POSTGRES STREAM --------
+    transformed.writeStream.foreachBatch(write_to_postgres).option(
+        "checkpointLocation", "/tmp/checkpoints/postgres"
+    ).trigger(processingTime="10 seconds").start()
 
-    # --- BRANCH B: REAL-TIME ANALYTICS (REDIS) ---
-
-    # 1. Dashboard Metric: Top Categories
-    category_counts = transformed_stream.groupBy("category_code").count()
-
-    # 2. ML Feature: User Activity Count (Velocity)
-    # "How many actions has this user done in this session?"
-    user_activity = transformed_stream.groupBy("user_session").agg(
+    # -------- REDIS STREAMS --------
+    category_counts = transformed.groupBy("category_code").count()
+    user_activity = transformed.groupBy("user_session").agg(
         count("*").alias("activity_count")
     )
 
-    # Write Category Counts to Redis
-    query_cats = (
-        category_counts.writeStream.outputMode("complete")
-        .foreachBatch(write_features_to_redis)
-        .trigger(processingTime="5 seconds")
-        .start()
-    )
+    category_counts.writeStream.outputMode("complete").foreachBatch(
+        write_category_stats
+    ).option("checkpointLocation", "/tmp/checkpoints/category").trigger(
+        processingTime="15 seconds"
+    ).start()
 
-    # Write User Activity to Redis
-    query_activity = (
-        user_activity.writeStream.outputMode("complete")
-        .foreachBatch(write_features_to_redis)
-        .trigger(processingTime="5 seconds")
-        .start()
-    )
+    user_activity.writeStream.outputMode("complete").foreachBatch(
+        write_user_activity
+    ).option("checkpointLocation", "/tmp/checkpoints/activity").trigger(
+        processingTime="5 seconds"
+    ).start()
 
-    print("Streaming Started! Writing Features to Redis & History to Postgres...")
-
+    print("🚀 Spark Streaming started successfully")
     spark.streams.awaitAnyTermination()
 
 
+# ================= ENTRY POINT =================
 if __name__ == "__main__":
     process_stream()

@@ -65,7 +65,10 @@ def process_file(file_path):
 
         for index, row in chunk.iterrows():
 
-            original_time = row["event_time"]
+            original_time = pd.to_datetime(row["event_time"]).strftime(
+                "%Y-%m-%d %H:%M:%S"
+            )
+
             processing_time = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
 
             message = {
@@ -96,7 +99,7 @@ def process_file(file_path):
             # 300 million rows is huge.
             # sleep(0.001) = ~1000 events/sec.
             # Remove sleep entirely if you want maximum throughput.
-            time.sleep(0.001)
+            time.sleep(0.01)
 
             # Check demo limit
             if DEMO_LIMIT_ROWS and total_processed >= DEMO_LIMIT_ROWS:
