@@ -9,8 +9,12 @@ RUN echo "deb http://deb.debian.org/debian bookworm main" > /etc/apt/sources.lis
 
 # Now run the install
 RUN apt-get update --allow-releaseinfo-change && \
-    apt-get install -y default-jre-headless procps && \
-    rm -rf /var/lib/apt/lists/*
+    apt-get install -y \
+        default-jre-headless \
+        procps \
+        libgomp1 \
+    && rm -rf /var/lib/apt/lists/*
+
 
 # 3. Set JAVA_HOME dynamically
 # This command asks Linux where it put the default java, so we don't have to guess

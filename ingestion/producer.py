@@ -17,9 +17,7 @@ CSV_FILES = [
     "./data/2019-Oct.csv",
 ]
 
-# limit for testing: Set to None to process EVERYTHING (takes days),
-# or set to an integer (e.g., 100000) to stop after that many rows per file for a quick demo.
-DEMO_LIMIT_ROWS = 100000
+DEMO_LIMIT_ROWS = None
 
 # --- INITIALIZE PRODUCER ---
 producer = KafkaProducer(
@@ -44,17 +42,6 @@ def process_file(file_path):
     csv_stream = pd.read_csv(
         file_path,
         chunksize=chunk_size,
-        # Define types to save memory/ensure accuracy
-        # dtype={
-        #     'product_id': 'int64',
-        #     'category_id': 'int64',
-        #     'user_id': 'int64',
-        #     # Read others as string first to handle mixed types safely
-        #     'event_type': 'string',
-        #     'category_code': 'string',
-        #     'brand': 'string',
-        #     'user_session': 'string'
-        # }
     )
 
     for chunk in csv_stream:
@@ -95,10 +82,7 @@ def process_file(file_path):
                     f"[{file_path}]  Sent {total_processed} events. Last: {message['event_type']} @ {processing_time}"
                 )
 
-            # 4. Speed Control
-            # 300 million rows is huge.
-            # sleep(0.001) = ~1000 events/sec.
-            # Remove sleep entirely if you want maximum throughput.
+         
             time.sleep(0.01)
 
             # Check demo limit

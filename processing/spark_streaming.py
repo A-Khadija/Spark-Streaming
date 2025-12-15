@@ -72,7 +72,7 @@ def write_to_postgres(df, batch_id):
         )
     )
 
-    print(f"✅ Batch {batch_id}: written to PostgreSQL")
+    print(f" Batch {batch_id}: written to PostgreSQL")
 
 
 # ================= REDIS WRITERS =================
@@ -85,7 +85,7 @@ def write_category_stats(df, batch_id):
             pipe.set(f"category_stats:{row['category_code']}", row["count"])
 
     pipe.execute()
-    print(f"✅ Batch {batch_id}: category stats written to Redis")
+    print(f" Batch {batch_id}: category stats written to Redis")
 
 
 def write_user_activity(df, batch_id):
@@ -100,7 +100,7 @@ def write_user_activity(df, batch_id):
             )
 
     pipe.execute()
-    print(f"✅ Batch {batch_id}: user activity written to Redis")
+    print(f" Batch {batch_id}: user activity written to Redis")
 
 
 # ================= MAIN STREAM =================
@@ -119,12 +119,14 @@ def process_stream():
 
     # -------- READ FROM KAFKA --------
     raw_stream = (
-        spark.readStream.format("kafka")
-        .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP)
-        .option("subscribe", TOPIC)
-        .option("startingOffsets", "latest")
-        .load()
-    )
+    spark.readStream.format("kafka")
+    .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP)
+    .option("subscribe", TOPIC)
+    .option("startingOffsets", "latest")  
+    .option("failOnDataLoss", "false")   
+    .load()
+)
+
 
     # -------- PARSE JSON --------
     json_stream = raw_stream.select(
@@ -178,7 +180,7 @@ def process_stream():
         processingTime="5 seconds"
     ).start()
 
-    print("🚀 Spark Streaming started successfully")
+    print(" Spark Streaming started successfully")
     spark.streams.awaitAnyTermination()
 
 

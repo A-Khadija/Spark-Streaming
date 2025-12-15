@@ -31,17 +31,11 @@ services:
       - "9092:9092"
     volumes:
       - kafka_data:/var/lib/kafka/data
-
-  kafka-ui:
-    image: provectuslabs/kafka-ui:latest
-    container_name: kafka-ui
-    ports:
-      - "8080:8080"
-    environment:
-      KAFKA_CLUSTERS_0_NAME: local
-      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:9092
-    depends_on:
-      - kafka
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 10s
+      timeout: 10s
+      retries: 5
 
   # -------------------------
   # PRODUCER
@@ -50,7 +44,8 @@ services:
     build: .
     container_name: producer
     depends_on:
-      - kafka
+      kafka:
+        condition: service_healthy
     command: python ingestion/producer.py
     volumes:
       - .:/app
@@ -118,9 +113,25 @@ services:
       - .:/app
 
 # -------------------------
+  # VISUALIZATION (Grafana)
+  # -------------------------
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    depends_on:
+      - postgres
+    environment:
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+
+# -------------------------
 # VOLUMES (must be ROOT-level)
 # -------------------------
 volumes:
   kafka_data:
   postgres_data:
-  spark_checkpoints: 
+  spark_checkpoints:
+  grafana_data:  
