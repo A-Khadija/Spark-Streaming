@@ -1,5 +1,3 @@
-version: "3.9"
-
 services:
   # -----------------------------------------------------------
   # ZOOKEEPER
@@ -39,16 +37,17 @@ services:
 
   # -------------------------
   # PRODUCER
-  # -------------------------
   producer:
     build: .
     container_name: producer
     depends_on:
       kafka:
         condition: service_healthy
-    command: python ingestion/producer.py
+    command: python -u ingestion/producer.py
     volumes:
       - .:/app
+    environment:
+      PYTHONUNBUFFERED: 1
 
   # -------------------------
   # SPARK STREAMING

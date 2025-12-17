@@ -26,7 +26,7 @@ WORKDIR /app
 # 5. Copy requirements and install
 COPY requirements.txt .
 # We add --default-timeout=100 to give it more time to download
-RUN pip install --default-timeout=1000 --no-cache-dir -r requirements.txt
+RUN pip install --default-timeout=1000 --no-cache-dir -r requirements.txt 
 
 # 6. Copy the rest of the application
 COPY . .
