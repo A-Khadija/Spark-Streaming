@@ -14,9 +14,13 @@ from pyspark.sql.types import (
     IntegerType,
     FloatType,
 )
-import redis
 
-# ================= CONFIG =================
+import redis
+from inference.predictor import predict_cart_event
+
+# =====================================================
+# CONFIG
+# =====================================================
 KAFKA_BOOTSTRAP = "kafka:9092"
 TOPIC = "user_behavior"
 
@@ -30,7 +34,9 @@ POSTGRES_PROPERTIES = {
 REDIS_HOST = "redis"
 REDIS_PORT = 6379
 
-# ================= SCHEMA =================
+# =====================================================
+# SCHEMA
+# =====================================================
 schema = StructType(
     [
         StructField("event_time", StringType()),
@@ -47,7 +53,9 @@ schema = StructType(
 )
 
 
-# ================= POSTGRES WRITER =================
+# =====================================================
+# POSTGRES WRITER (ARCHIVE)
+# =====================================================
 def write_to_postgres(df, batch_id):
     (
         df.select(
@@ -71,21 +79,25 @@ def write_to_postgres(df, batch_id):
             properties=POSTGRES_PROPERTIES,
         )
     )
+    print(f"Batch {batch_id}: written to PostgreSQL")
 
-    print(f" Batch {batch_id}: written to PostgreSQL")
 
-
-# ================= REDIS WRITERS =================
+# =====================================================
+# REDIS WRITERS (REAL-TIME METRICS)
+# =====================================================
 def write_category_stats(df, batch_id):
     r = redis.Redis(host=REDIS_HOST, port=REDIS_PORT, db=0)
     pipe = r.pipeline()
 
+    # reset du ZSET à chaque batch (outputMode complete)
+    pipe.delete("category_stats")
+
     for row in df.collect():
-        if row["category_code"]:
-            pipe.set(f"category_stats:{row['category_code']}", row["count"])
+        if row["category_code"] is not None:
+            pipe.zadd("category_stats", {row["category_code"]: int(row["count"])})
 
     pipe.execute()
-    print(f" Batch {batch_id}: category stats written to Redis")
+    print(f"Batch {batch_id}: category_stats ZSET updated")
 
 
 def write_user_activity(df, batch_id):
@@ -100,10 +112,28 @@ def write_user_activity(df, batch_id):
             )
 
     pipe.execute()
-    print(f" Batch {batch_id}: user activity written to Redis")
+    print(f"Batch {batch_id}: user activity written to Redis")
 
 
-# ================= MAIN STREAM =================
+# =====================================================
+# ML PREDICTION STREAM
+# =====================================================
+def predict_batch(df, batch_id):
+    """
+    Perform real-time ML inference ONLY on cart events
+    """
+    cart_events = df.filter(col("event_type") == "cart").collect()
+
+    for row in cart_events:
+        event = row.asDict()
+        predict_cart_event(event)
+
+    print(f"Batch {batch_id}: ML predictions generated")
+
+
+# =====================================================
+# MAIN STREAM
+# =====================================================
 def process_stream():
     spark = (
         SparkSession.builder.appName("EcommerceStreaming")
@@ -117,52 +147,46 @@ def process_stream():
 
     spark.sparkContext.setLogLevel("WARN")
 
-    # -------- READ FROM KAFKA --------
+    # -------------------------------
+    # READ FROM KAFKA
+    # -------------------------------
     raw_stream = (
-    spark.readStream.format("kafka")
-    .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP)
-    .option("subscribe", TOPIC)
-    .option("startingOffsets", "latest")  
-    .option("failOnDataLoss", "false")   
-    .load()
-)
+        spark.readStream.format("kafka")
+        .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP)
+        .option("subscribe", TOPIC)
+        .option("startingOffsets", "latest")
+        .option("failOnDataLoss", "false")
+        .load()
+    )
 
-
-    # -------- PARSE JSON --------
+    # -------------------------------
+    # PARSE JSON
+    # -------------------------------
     json_stream = raw_stream.select(
         from_json(col("value").cast("string"), schema).alias("data")
     ).select("data.*")
 
-    # -------- FEATURE ENGINEERING --------
+    # -------------------------------
+    # FEATURE ENGINEERING
+    # -------------------------------
     transformed = (
-        json_stream.withColumn(
-            "event_time",
-            to_timestamp(col("event_time"), "yyyy-MM-dd HH:mm:ss"),
-        )
-        .withColumn(
-            "processing_time",
-            to_timestamp(col("processing_time"), "yyyy-MM-dd HH:mm:ss"),
-        )
-        .withColumn(
-            "category_level1",
-            split(col("category_code"), "\.").getItem(0),
-        )
-        .withColumn(
-            "category_level2",
-            split(col("category_code"), "\.").getItem(1),
-        )
-        .withColumn(
-            "event_weekday",
-            dayofweek(col("event_time")),
-        )
+        json_stream.withColumn("event_time", to_timestamp(col("event_time")))
+        .withColumn("processing_time", to_timestamp(col("processing_time")))
+        .withColumn("category_level1", split(col("category_code"), "\.").getItem(0))
+        .withColumn("category_level2", split(col("category_code"), "\.").getItem(1))
+        .withColumn("event_weekday", dayofweek(col("event_time")))
     )
 
-    # -------- POSTGRES STREAM --------
+    # -------------------------------
+    # ARCHIVE STREAM → POSTGRES
+    # -------------------------------
     transformed.writeStream.foreachBatch(write_to_postgres).option(
         "checkpointLocation", "/tmp/checkpoints/postgres"
     ).trigger(processingTime="10 seconds").start()
 
-    # -------- REDIS STREAMS --------
+    # -------------------------------
+    # REAL-TIME METRICS → REDIS
+    # -------------------------------
     category_counts = transformed.groupBy("category_code").count()
     user_activity = transformed.groupBy("user_session").agg(
         count("*").alias("activity_count")
@@ -171,19 +195,28 @@ def process_stream():
     category_counts.writeStream.outputMode("complete").foreachBatch(
         write_category_stats
     ).option("checkpointLocation", "/tmp/checkpoints/category").trigger(
-        processingTime="15 seconds"
+        processingTime="10 seconds"
     ).start()
 
     user_activity.writeStream.outputMode("complete").foreachBatch(
         write_user_activity
     ).option("checkpointLocation", "/tmp/checkpoints/activity").trigger(
-        processingTime="5 seconds"
+        processingTime="10 seconds"
     ).start()
 
-    print(" Spark Streaming started successfully")
+    # -------------------------------
+    # REAL-TIME ML PREDICTION
+    # -------------------------------
+    transformed.writeStream.foreachBatch(predict_batch).option(
+        "checkpointLocation", "/tmp/checkpoints/prediction"
+    ).trigger(processingTime="10 seconds").start()
+
+    print("🚀 Spark Streaming with ML inference started")
     spark.streams.awaitAnyTermination()
 
 
-# ================= ENTRY POINT =================
+# =====================================================
+# ENTRY POINT
+# =====================================================
 if __name__ == "__main__":
     process_stream()
