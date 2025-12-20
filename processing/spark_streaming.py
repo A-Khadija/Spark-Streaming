@@ -2,8 +2,8 @@ from pyspark.sql import SparkSession
 from pyspark.sql.functions import (
     from_json,
     col,
-    count,
     split,
+    trim,
     dayofweek,
     to_timestamp,
 )
@@ -29,8 +29,11 @@ POSTGRES_PROPERTIES = {
     "user": "user",
     "password": "password",
     "driver": "org.postgresql.Driver",
+    "batchsize": "10000",
+    "rewriteBatchedInserts": "true",
 }
 
+<<<<<<< HEAD
 REDIS_HOST = "redis"
 REDIS_PORT = 6379
 
@@ -52,33 +55,38 @@ schema = StructType(
     ]
 )
 
+=======
+# ================= SCHEMA =================
+schema = StructType([
+    StructField("event_id", StringType()),
+    StructField("event_time", StringType()),
+    StructField("processing_time", StringType()),
+    StructField("event_type", StringType()),
+    StructField("product_id", IntegerType()),
+    StructField("category_id", IntegerType()),
+    StructField("category_code", StringType()),
+    StructField("brand", StringType()),
+    StructField("price", FloatType()),
+    StructField("user_id", IntegerType()),
+    StructField("user_session", StringType()),
+])
+>>>>>>> beba52005e31ac16ad1fb5737a86aefeb8436459
 
 # =====================================================
 # POSTGRES WRITER (ARCHIVE)
 # =====================================================
 def write_to_postgres(df, batch_id):
     (
-        df.select(
-            "event_time",
-            "processing_time",
-            "event_type",
-            "product_id",
-            "category_id",
-            "category_code",
-            "brand",
-            "price",
-            "user_id",
-            "user_session",
-            "category_level1",
-            "category_level2",
-            "event_weekday",
-        ).write.jdbc(
-            url=POSTGRES_URL,
-            table="raw_events",
-            mode="append",
-            properties=POSTGRES_PROPERTIES,
-        )
+        df.repartition(8)
+          .write
+          .jdbc(
+              url=POSTGRES_URL,
+              table="raw_events",
+              mode="append",
+              properties=POSTGRES_PROPERTIES,
+          )
     )
+<<<<<<< HEAD
     print(f"Batch {batch_id}: written to PostgreSQL")
 
 
@@ -134,9 +142,15 @@ def predict_batch(df, batch_id):
 # =====================================================
 # MAIN STREAM
 # =====================================================
+=======
+    print(f"Batch {batch_id} written to Postgres")
+
+# ================= MAIN =================
+>>>>>>> beba52005e31ac16ad1fb5737a86aefeb8436459
 def process_stream():
     spark = (
-        SparkSession.builder.appName("EcommerceStreaming")
+        SparkSession.builder
+        .appName("EcommerceStreaming")
         .config(
             "spark.jars.packages",
             "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,"
@@ -147,11 +161,17 @@ def process_stream():
 
     spark.sparkContext.setLogLevel("WARN")
 
+<<<<<<< HEAD
     # -------------------------------
     # READ FROM KAFKA
     # -------------------------------
     raw_stream = (
         spark.readStream.format("kafka")
+=======
+    raw_stream = (
+        spark.readStream
+        .format("kafka")
+>>>>>>> beba52005e31ac16ad1fb5737a86aefeb8436459
         .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP)
         .option("subscribe", TOPIC)
         .option("startingOffsets", "latest")
@@ -159,24 +179,36 @@ def process_stream():
         .load()
     )
 
+<<<<<<< HEAD
     # -------------------------------
     # PARSE JSON
     # -------------------------------
+=======
+>>>>>>> beba52005e31ac16ad1fb5737a86aefeb8436459
     json_stream = raw_stream.select(
         from_json(col("value").cast("string"), schema).alias("data")
     ).select("data.*")
 
+<<<<<<< HEAD
     # -------------------------------
     # FEATURE ENGINEERING
     # -------------------------------
     transformed = (
         json_stream.withColumn("event_time", to_timestamp(col("event_time")))
+=======
+    transformed = (
+        json_stream
+        .drop("category_id")
+        .filter((col("category_code").isNotNull()) & (trim(col("category_code")) != ""))
+        .withColumn("event_time", to_timestamp(col("event_time")))
+>>>>>>> beba52005e31ac16ad1fb5737a86aefeb8436459
         .withColumn("processing_time", to_timestamp(col("processing_time")))
         .withColumn("category_level1", split(col("category_code"), "\.").getItem(0))
         .withColumn("category_level2", split(col("category_code"), "\.").getItem(1))
         .withColumn("event_weekday", dayofweek(col("event_time")))
     )
 
+<<<<<<< HEAD
     # -------------------------------
     # ARCHIVE STREAM → POSTGRES
     # -------------------------------
@@ -218,5 +250,18 @@ def process_stream():
 # =====================================================
 # ENTRY POINT
 # =====================================================
+=======
+    (
+        transformed.writeStream
+        .foreachBatch(write_to_postgres)
+        .option("checkpointLocation", "/tmp/checkpoints/postgres")
+        .trigger(processingTime="30 seconds")
+        .start()
+    )
+
+    print("Spark Streaming started")
+    spark.streams.awaitAnyTermination()
+
+>>>>>>> beba52005e31ac16ad1fb5737a86aefeb8436459
 if __name__ == "__main__":
     process_stream()
