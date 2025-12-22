@@ -1,5 +1,4 @@
 services:
-
   # -----------------------------------------------------------
   # ZOOKEEPER
   # -----------------------------------------------------------
@@ -36,7 +35,6 @@ services:
       timeout: 10s
       retries: 5
 
-
   # -------------------------
   # PRODUCER
   producer:
@@ -49,11 +47,10 @@ services:
     volumes:
       - .:/app
     environment:
-      PYTHONUNBUFFERED: 1
+      - PYTHONUNBUFFERED=1
 
   # -------------------------
   # SPARK STREAMING
-  # -------------------------
   spark-processor:
     build: .
     container_name: spark-processor
@@ -64,14 +61,13 @@ services:
       - .:/app
       - spark_checkpoints:/tmp/checkpoints
     environment:
-      PYTHONUNBUFFERED: 1
-      PYSPARK_PYTHON: python
-      PYSPARK_DRIVER_PYTHON: python
-      PYTHONPATH: /app
+      - PYTHONUNBUFFERED=1
+      - PYSPARK_PYTHON=python
+      - PYSPARK_DRIVER_PYTHON=python
+      - PYTHONPATH=/app
 
   # -------------------------
   # POSTGRESQL
-  # -------------------------
   postgres:
     image: postgres:13
     container_name: postgres
@@ -87,7 +83,6 @@ services:
 
   # -------------------------
   # REDIS
-  # -------------------------
   redis:
     image: redis:latest
     container_name: redis
@@ -95,8 +90,7 @@ services:
       - "6379:6379"
 
   # -------------------------
-  # ML TRAINER
-  # -------------------------
+  # ML TRAINER & DASHBOARD
   trainer:
     build: .
     container_name: ml-trainer
@@ -107,9 +101,6 @@ services:
     volumes:
       - .:/app
 
-  # -------------------------
-  # DASHBOARD
-  # -------------------------
   dashboard:
     build: .
     container_name: dashboard
@@ -124,7 +115,6 @@ services:
 
   # -------------------------
   # GRAFANA
-  # -------------------------
   grafana:
     image: grafana/grafana:latest
     container_name: grafana
@@ -134,22 +124,13 @@ services:
       - postgres
       - redis
     environment:
-<<<<<<< HEAD
       - GF_SECURITY_ADMIN_PASSWORD=admin
       - GF_INSTALL_PLUGINS=redis-datasource
-=======
-      GF_SECURITY_ADMIN_PASSWORD: admin
-      GF_INSTALL_PLUGINS: redis-datasource
->>>>>>> 568f93bee2e22fd33692c4cb888755cae63169e9
     volumes:
       - grafana_data:/var/lib/grafana
-      # ADD THESE TWO LINES:
       - ./dashboards:/etc/grafana/provisioning/dashboards
       - ./dashboards/ecommerce-dashboard.json:/var/lib/grafana/dashboards/ecommerce-dashboard.json
 
-# -------------------------
-# VOLUMES
-# -------------------------
 volumes:
   kafka_data:
   postgres_data:
