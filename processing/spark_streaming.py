@@ -55,13 +55,27 @@ def write_raw_events(df, batch_id):
         print(f"DEBUG [Batch {batch_id}]: Writing {count} raw events to Postgres...")
         (
             df.select(
-                "event_time", "event_type", "product_id", "category_code",
-                "brand", "price", "user_id", "user_session",
-                "category_level1", "category_level2", "event_weekday",
+                col("event_time"),
+                col("event_type"),
+                col("product_id").cast("int"),  # <--- FORCE CAST HERE
+                col("category_code"),
+                col("brand"),
+                col("price").cast("double"),
+                col("user_id").cast("int"),     # <--- FORCE CAST HERE
+                col("user_session"),
+                col("category_level1"),
+                col("category_level2"),
+                col("event_weekday")
             )
             .write
-            .jdbc(url=POSTGRES_URL, table="raw_events", mode="append", properties=POSTGRES_PROPERTIES)
+            .jdbc(
+                url=POSTGRES_URL, 
+                table="raw_events", 
+                mode="append", 
+                properties=POSTGRES_PROPERTIES
+            )
         )
+        print(f"DEBUG [Batch {batch_id}]: Raw events write complete.")
 
 def write_sales_per_minute(df, batch_id):
     if df.isEmpty():
