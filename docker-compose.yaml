@@ -35,6 +35,7 @@ services:
       timeout: 10s
       retries: 5
 
+
   # -------------------------
   # PRODUCER
   producer:
@@ -123,8 +124,12 @@ services:
       - postgres
     environment:
       - GF_SECURITY_ADMIN_PASSWORD=admin
+      - GF_INSTALL_PLUGINS=redis-datasource
     volumes:
       - grafana_data:/var/lib/grafana
+      # ADD THESE TWO LINES:
+      - ./dashboards:/etc/grafana/provisioning/dashboards
+      - ./dashboards/ecommerce-dashboard.json:/var/lib/grafana/dashboards/ecommerce-dashboard.json
 
 # -------------------------
 # VOLUMES (must be ROOT-level)

@@ -8,7 +8,4 @@ scikit-learn==1.3.2
 joblib==1.3.2
 lightgbm
 lz4
-# dash
-# dash-bootstrap-components
-# plotly
-# psycopg2-binary
+

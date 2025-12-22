@@ -30,6 +30,7 @@ RUN pip install --default-timeout=1000 --no-cache-dir -r requirements.txt
 
 # 6. Copy the rest of the application
 COPY . .
-
+# Add this above the CMD line
+ENV PYTHONPATH="/app"
 # 7. Default command
 CMD ["python", "processing/spark_streaming.py"]
