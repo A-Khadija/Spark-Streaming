@@ -74,7 +74,11 @@ def predict_cart_event(event):
     r.xadd(
         "stream:ml_metrics",
         {
+<<<<<<< HEAD
             "ts": str(int(time.time() * 1000)),  
+=======
+            "ts": str(int(time.time() * 1000)),  # 👈 timestamp in ms
+>>>>>>> 568f93bee2e22fd33692c4cb888755cae63169e9
             "probability": str(proba),
             "prediction": str(prediction),
             "price": str(event["price"]),
@@ -82,4 +86,8 @@ def predict_cart_event(event):
         maxlen=10000,
     )
 
+<<<<<<< HEAD
     return proba, prediction
+=======
+    return proba, prediction
+>>>>>>> 568f93bee2e22fd33692c4cb888755cae63169e9
