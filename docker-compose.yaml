@@ -37,6 +37,7 @@ services:
 
   # -------------------------
   # PRODUCER
+  # -------------------------
   producer:
     build: .
     container_name: producer
@@ -51,6 +52,7 @@ services:
 
   # -------------------------
   # SPARK STREAMING
+  # -------------------------
   spark-processor:
     build: .
     container_name: spark-processor
@@ -62,12 +64,19 @@ services:
       - spark_checkpoints:/tmp/checkpoints
     environment:
       - PYTHONUNBUFFERED=1
+      - SPARK_DRIVER_MEMORY=2g  
+      - SPARK_EXECUTOR_MEMORY=2g 
       - PYSPARK_PYTHON=python
       - PYSPARK_DRIVER_PYTHON=python
       - PYTHONPATH=/app
+    deploy:
+      resources:
+        limits:
+          memory: 4G
 
   # -------------------------
   # POSTGRESQL
+  # -------------------------
   postgres:
     image: postgres:13
     container_name: postgres
@@ -83,6 +92,7 @@ services:
 
   # -------------------------
   # REDIS
+  # -------------------------
   redis:
     image: redis:latest
     container_name: redis
@@ -91,6 +101,7 @@ services:
 
   # -------------------------
   # ML TRAINER & DASHBOARD
+  # -------------------------
   trainer:
     build: .
     container_name: ml-trainer
@@ -115,6 +126,7 @@ services:
 
   # -------------------------
   # GRAFANA
+  # -------------------------
   grafana:
     image: grafana/grafana:latest
     container_name: grafana

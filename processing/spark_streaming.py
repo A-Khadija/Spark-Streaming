@@ -24,7 +24,7 @@ POSTGRES_PROPERTIES = {
     "user": "user",
     "password": "password",
     "driver": "org.postgresql.Driver",
-    "batchsize": "10000",
+    "batchsize": "2000",
     "rewriteBatchedInserts": "true",
 }
 
@@ -67,6 +67,7 @@ def write_raw_events(df, batch_id):
                 col("category_level2"),
                 col("event_weekday")
             )
+            .coalesce(1)
             .write
             .jdbc(
                 url=POSTGRES_URL, 
@@ -86,7 +87,7 @@ def write_sales_per_minute(df, batch_id):
     
     staging_table = f"staging_sales_{batch_id}"
     df.write.jdbc(url=POSTGRES_URL, table=staging_table, mode="overwrite", properties=POSTGRES_PROPERTIES)
-
+    df.coalesce(1).write.jdbc(url=POSTGRES_URL, table=staging_table, mode="overwrite", properties=POSTGRES_PROPERTIES)
     upsert_sql = f"""
     INSERT INTO analytics.sales_per_minute (minute, total_sales)
     SELECT minute, total_sales FROM {staging_table}
@@ -123,7 +124,30 @@ def redis_and_ml_sink(df, batch_id):
             event = row.asDict()
             r.hincrby(f"user:{event['user_id']}", "cart_count", 1)
             predict_cart_event(event)
-
+# =====================================================
+# UNIFIED SINK (Combines all tasks into one batch)
+# =====================================================
+def unified_foreach_sink(df, batch_id):
+    # Cache to avoid re-reading Kafka data for each step
+    df.cache()
+    
+    # 1. Raw Events
+    write_raw_events(df, batch_id)
+    
+    # 2. Sales Aggregates
+    sales_batch = (
+        df.filter(col("event_type") == "purchase")
+        .groupBy(window(col("event_time"), "1 minute"))
+        .agg(spark_sum("price").alias("total_sales"))
+        .select(col("window.start").alias("minute"), "total_sales")
+    )
+    write_sales_per_minute(sales_batch, batch_id)
+    
+    # 3. Redis + ML
+    redis_and_ml_sink(df, batch_id)
+    
+    # Crucial: Free the memory after the batch finishes
+    df.unpersist()
 # =====================================================
 # MAIN STREAM
 # =====================================================
@@ -131,6 +155,9 @@ def process_stream():
     spark = (
         SparkSession.builder
         .appName("EcommerceStreamingFinal")
+        .config("spark.sql.shuffle.partitions", "4")  # Reduced from 200
+        .config("spark.default.parallelism", "4")
+        .config("spark.memory.fraction", "0.8")
         .config("spark.jars.packages", "org.apache.spark:spark-sql-kafka-0-10_2.12:3.5.0,org.postgresql:postgresql:42.6.0")
         .getOrCreate()
     )
@@ -138,10 +165,13 @@ def process_stream():
     print("INFO: Spark Stream starting...")
 
     raw_stream = (
-        spark.readStream.format("kafka")
+        spark.readStream
+        .format("kafka")
         .option("kafka.bootstrap.servers", KAFKA_BOOTSTRAP)
         .option("subscribe", TOPIC)
         .option("startingOffsets", "earliest")
+        .option("maxOffsetsPerTrigger", 5000)  # <-- ADD THIS: Limits rows per batch
+        .option("failOnDataLoss", "false")
         .load()
     )
 
@@ -150,7 +180,7 @@ def process_stream():
     transformed = (
         json_stream
         .withColumn("event_time", to_timestamp(col("event_time")))
-        .withWatermark("event_time", "2 minutes")
+        .withWatermark("event_time", "5 minutes")
         .withColumn("user_id", col("user_id").cast("int"))
         .withColumn("price", col("price").cast("double"))
         .withColumn("category_level1", split(col("category_code"), "\.").getItem(0))
@@ -158,21 +188,15 @@ def process_stream():
         .withColumn("event_weekday", dayofweek(col("event_time")))
     )
 
-    transformed.writeStream.foreachBatch(write_raw_events) \
-        .option("checkpointLocation", "/tmp/checkpoints/raw").start()
-
-    sales_per_minute = (
-        transformed.filter(col("event_type") == "purchase")
-        .groupBy(window(col("event_time"), "1 minute"))
-        .agg(spark_sum("price").alias("total_sales"))
-        .select(col("window.start").alias("minute"), "total_sales")
+    query = (
+        transformed.writeStream
+        .foreachBatch(unified_foreach_sink)
+        .option("checkpointLocation", "/tmp/checkpoints/unified_v2")
+        .trigger(processingTime="60 seconds") # Give JVM time to recover between batches
+        .start()
     )
 
-    sales_per_minute.writeStream.foreachBatch(write_sales_per_minute) \
-        .outputMode("update").option("checkpointLocation", "/tmp/checkpoints/sales").start()
-
-    transformed.writeStream.foreachBatch(redis_and_ml_sink) \
-        .option("checkpointLocation", "/tmp/checkpoints/ml").start()
+    query.awaitTermination()
 
     spark.streams.awaitAnyTermination()
 

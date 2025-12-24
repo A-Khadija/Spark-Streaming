@@ -27,7 +27,7 @@ WORKDIR /app
 COPY requirements.txt .
 # We add --default-timeout=100 to give it more time to download
 RUN pip install --default-timeout=1000 --no-cache-dir -r requirements.txt 
-
+# Add this line to pre-download JARs during build time
 # 6. Copy the rest of the application
 COPY . .
 # Add this above the CMD line
